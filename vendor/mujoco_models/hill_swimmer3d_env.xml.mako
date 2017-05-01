@@ -1,3 +1,4 @@
+<!-- bla -->
 <%
     difficulty = opts.get("difficulty", 1.0)
     texturedir = opts.get("texturedir", "/tmp/mujoco_textures")
@@ -6,11 +7,9 @@
 <mujoco model="swimmer">
   <compiler inertiafromgeom="true" angle="degree" coordinate="local" texturedir="${texturedir}"/>
   <custom>
-    <numeric name="frame_skip" data="50" />
+    <numeric name="frame_skip" data="5"/>
   </custom>
-  <option timestep="0.001" density="4000" viscosity="0.1" integrator="Euler" iterations="1000">
-    <flag warmstart="disable" />
-  </option>
+  <option timestep="0.005" density="4000" viscosity="0.1" integrator="Euler" />
   <default>
     <geom contype='1' conaffinity='1' condim='1' rgba='0.8 0.6 .4 1' material="geom" />
     <!--<joint armature='1'  />-->
@@ -42,7 +41,7 @@
     </body>
   </worldbody>
   <actuator>
-    <motor joint="rot2" ctrllimited="true" ctrlrange="-50 50" />
-    <motor joint="rot3" ctrllimited="true" ctrlrange="-50 50" />
+    <motor ctrllimited="true" ctrlrange="-1 1" gear="150.0" joint="rot2"/>
+    <motor ctrllimited="true" ctrlrange="-1 1" gear="150.0" joint="rot3"/>
   </actuator>
 </mujoco>

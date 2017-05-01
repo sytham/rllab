@@ -1,7 +1,7 @@
 import numpy as np
 from rllab.misc import tensor_utils
 import time
-
+import warnings
 
 def rollout(env, agent, max_path_length=np.inf, animated=False, speedup=1,
             always_return_paths=False):
@@ -24,6 +24,10 @@ def rollout(env, agent, max_path_length=np.inf, animated=False, speedup=1,
         agent_infos.append(agent_info)
         env_infos.append(env_info)
         path_length += 1
+        if np.any(np.logical_or(np.logical_or(np.isinf(a), np.isnan(a)), np.abs(a) > 1e3)):
+            warnings.warn("Invalid action detected")
+            rewards[-1] = -1000.0
+            break
         if d:
             break
         o = next_o
