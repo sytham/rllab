@@ -61,7 +61,7 @@ def _launch_worker(exp_key, worker_id, host, port, result_db_name):
     if fail:
         raise RuntimeError("Problem starting hyperopt-mongo-worker.")
     
-def _wait_result(exp_prefix, exp_name, timeout):
+def _wait_result(exp_prefix, exp_name, timeout, parent_dir=''):
     """
     Poll for the sync of params.pkl (currently hardcoded) from S3, indicating that the task is done.
     
@@ -71,7 +71,7 @@ def _wait_result(exp_prefix, exp_name, timeout):
     :param timeout: int, polling timeout in seconds
     :return bool. False if the polling times out. True if successful.
     """
-    result_path = os.path.join(config.LOG_DIR, "s3", exp_prefix, exp_name, 'params.pkl')
+    result_path = os.path.join(config.LOG_DIR, "s3", parent_dir, exp_prefix, exp_name, 'params.pkl')
     print("Polling for results in",result_path) 
     try:
         file_handle = polling.poll(

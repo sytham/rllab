@@ -341,6 +341,7 @@ def run_experiment_lite(
         exp_prefix="experiment",
         exp_name=None,
         log_dir=None,
+        s3_parent_dir=None,
         script="scripts/run_experiment_lite.py",
         python_command="python",
         mode="local",
@@ -447,7 +448,7 @@ def run_experiment_lite(
         elif "variant" in task:
             del task["variant"]
         task["remote_log_dir"] = osp.join(
-            config.AWS_S3_PATH, exp_prefix.replace("_", "-"), task["exp_name"])
+            config.AWS_S3_PATH, '' if s3_parent_dir is None else s3_parent_dir, exp_prefix.replace("_", "-"), task["exp_name"])
         task["env"] = task.get("env", dict()) or dict()
         task["env"]["RLLAB_USE_GPU"] = str(use_gpu)
 

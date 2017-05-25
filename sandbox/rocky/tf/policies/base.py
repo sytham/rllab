@@ -104,3 +104,6 @@ class StochasticPolicy(Policy):
         :return:
         """
         raise NotImplementedError
+    
+    def set_greedy(self, greedy):
+        self.greedy = greedy

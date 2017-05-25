@@ -15,9 +15,11 @@ from contrib.rnn.policies.base import ContinuousTimeModel, Layer, RecurrentLayer
 
 class RNNPolicy(Policy):
         
-    def reset(self):
+    def reset(self, init_state=None):
         for l in self._layers:
             l.reset()
+        if init_state is not None:
+            self.set_state(init_state)
              
     def get_state(self):
         d = OrderedDict()
@@ -33,10 +35,6 @@ class RNNPolicy(Policy):
     
     @property
     def recurrent(self):
-        """
-        Indicates whether the policy is recurrent.
-        :return:
-        """
         return True
     
     def get_param_values(self, **tags):
@@ -133,10 +131,10 @@ class DeterministicDTRNNPolicy(RNNPolicy):
         num_in = env_spec.observation_space.flat_dim
         num_out = env_spec.action_space.flat_dim
         
-        self._layers = [RecurrentLayer(num_in, hidden_sizes[0], hidden_nonlinearity, state_initf=state_initf)]
-        self._layers.extend([RecurrentLayer(hidden_sizes[i-1], hidden_sizes[i], hidden_nonlinearity, state_initf=state_initf)
+        self._layers = [RecurrentLayer(num_in, hidden_sizes[0], transferf=hidden_nonlinearity, state_initf=state_initf)]
+        self._layers.extend([RecurrentLayer(hidden_sizes[i-1], hidden_sizes[i], transferf=hidden_nonlinearity, state_initf=state_initf)
                              for i in range(1,len(hidden_sizes))])
-        self._layers.append(Layer(hidden_sizes[-1], num_out, identity))
+        self._layers.append(Layer(hidden_sizes[-1], num_out, transferf=identity))
         
         super(DeterministicDTRNNPolicy, self).__init__(env_spec)
         
@@ -167,10 +165,10 @@ class DeterministicCTRNNPolicy(CTRNNPolicy):
         num_in = env_spec.observation_space.flat_dim
         num_out = env_spec.action_space.flat_dim
                 
-        self._layers = [RecurrentLayer(num_in, hidden_sizes[0], hidden_nonlinearity, state_initf=state_initf)]
-        self._layers.extend([RecurrentLayer(hidden_sizes[i-1], hidden_sizes[i], hidden_nonlinearity, state_initf=state_initf)
+        self._layers = [RecurrentLayer(num_in, hidden_sizes[0], transferf=hidden_nonlinearity, state_initf=state_initf)]
+        self._layers.extend([RecurrentLayer(hidden_sizes[i-1], hidden_sizes[i], transferf=hidden_nonlinearity, state_initf=state_initf)
                              for i in range(1,len(hidden_sizes))])
-        self._layers.append(Layer(hidden_sizes[-1], num_out, identity))
+        self._layers.append(Layer(hidden_sizes[-1], num_out, transferf=identity))
            
         super(DeterministicCTRNNPolicy, self).__init__(env_spec, timeconstant, env_timestep, integrator, max_dt)
         
@@ -187,113 +185,3 @@ class DeterministicCTRNNPolicy(CTRNNPolicy):
     
     def _output_from_h(self):
         return self._layers[-1].out(self._layers[-2].state)
-            
-    
-             
-# class DeterministicCTRNNPolicy(RNNPolicy, Serializable, Parameterized):
-#     '''
-#     Vanilla continuous-time recurrent neural net.
-#     '''
-#     def __init__(
-#             self,
-#             env_spec,
-#             hidden_sizes=(2,),
-#             hidden_nonlinearity=np.tanh,
-#             timeconstant=0.01,
-#             env_timestep=0.01,
-#             state_initf=None,
-#             integrator='euler'):
-#         
-#         Serializable.quick_init(self, locals())
-#         Parameterized.__init__(self)
-#         
-#         num_in = env_spec.observation_space.flat_dim
-#         num_out = env_spec.action_space.flat_dim
-#         self.timestep = env_timestep
-#         
-#         self._layers = [RecurrentLayer(num_in, hidden_sizes[0], hidden_nonlinearity, state_initf=state_initf)]
-#         self._layers.extend([RecurrentLayer(hidden_sizes[i-1], hidden_sizes[i], hidden_nonlinearity, state_initf=state_initf)
-#                              for i in range(1,len(hidden_sizes))])
-#         self._layers.append(Layer(hidden_sizes[-1], num_out, identity))
-#         
-#         #ContinuousTimeModel.__init__(self, timeconstant, integrator)
-#         self.tc = timeconstant
-#         self.integrator = integrator
-#         self.set_integrator(integrator)
-#         self.reset()
-#         
-#         super(DeterministicCTRNNPolicy, self).__init__(env_spec)
-#               
-#         
-#     def set_integrator(self, integrator):
-#         if integrator == 'rk4': integrator = 'dopri5'
-#         if integrator == 'euler':
-#             self.ode = EulerIntegrator(self._calculate_dh)
-#             self.ode_native_iter = 1
-#         else:
-#             #raise NotImplementedError("Scipy ODE causes problems when pickling / parallelizing")
-#             self.ode = ode(self._calculate_dh).set_integrator(integrator)
-#             self.ode_native_iter = 4
-#             
-#     def output(self, x, timestep=1):
-#         self.x = x
-#         dt = 0.005
-#         numiter = max(1, int(timestep / (self.ode_native_iter * dt)))
-#         for _ in range(numiter):
-#             #self.h += dt * self._calculate_dh(0, self.h)
-#             self.h = self.ode.integrate(self.ode.t + dt)
-#         return self._output_from_h()
-#                 
-#     def get_state(self):
-#         d = OrderedDict()
-#         d['h'] = self.h.copy()
-#         return d        
-#         
-#     @property
-#     def timeconstant(self):
-#         return self.tc
-#     @timeconstant.setter
-#     def timeconstant(self, value):
-#         self.tc = max(value, 0.01)
-#     
-#     def get_param_values(self, **tags):
-#         th = super(DeterministicCTRNNPolicy, self).get_param_values(**tags)
-#         return np.concatenate([np.array([self.timeconstant]), th])
-# 
-#     def set_param_values(self, flattened_params, **tags):
-#         self.timeconstant = flattened_params[0]
-#         super(DeterministicCTRNNPolicy, self).set_param_values(flattened_params[1:], **tags)
-#             
-#     def _calculate_dh(self, t, h, *args):
-#         x = self.x
-#         for l in self._layers[:-1]:
-#             x = l.out(x)
-#         out = (-h + self.h) / self.timeconstant
-#         return out
-#     
-#     def _output_from_h(self):
-#         return self._layers[-1].out(self._layers[-2].state)
-#             
-#     def get_action(self, observation):
-#         action = self.output(observation, self.timestep)
-#         return action, dict()
-#     
-#     def reset(self):
-#         RNNPolicy.reset(self)
-#         self.ode.set_initial_value(self.h, 0)
-#         #super(DeterministicCTRNNPolicy, self).reset()
-# 
-#     def set_state(self, state):
-#         RNNPolicy.set_state(self, state)
-#         self.ode.set_initial_value(self.h, 0)
-#         #super(DeterministicCTRNNPolicy, self).set_state(state)
-#         
-#     def __getstate__(self):
-#         d = Parameterized.__getstate__(self)
-#         d['integrator'] = self.integrator
-#         return d
-# 
-#     def __setstate__(self, d):
-#         Parameterized.__setstate__(self, d)
-#         self.integrator = d['integrator']
-#         self.set_integrator(self.integrator)

@@ -1,5 +1,6 @@
 import numpy as np
 from cached_property import cached_property
+import warnings
 
 from rllab import spaces
 from rllab.core.serializable import Serializable
@@ -53,8 +54,12 @@ class OcclusionEnv(ProxyEnv, Serializable):
         return spaces.Box(ub * -1, ub)
     
     @overrides
-    def reset(self):
-        obs = self._wrapped_env.reset()
+    def reset(self, init_state=None):
+        try:
+            obs = self._wrapped_env.reset(init_state)
+        except TypeError:
+            warnings.warn("Wrapped env does not seem to support resetting to specified init state")
+            obs = self._wrapped_env.reset()
         return self.occlude(obs)
 
     @overrides

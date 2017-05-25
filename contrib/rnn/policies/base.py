@@ -2,8 +2,7 @@ from collections import OrderedDict
 
 import numpy as np
 from scipy.integrate import ode
-
-from rllab.core.serializable import Serializable
+import lasagne.init as linit
 
 def identity(x):
     return x
@@ -13,7 +12,7 @@ def logisticmap(x):
     return np.maximum(1 - x*x, -1.)
 
 class Layer(object):
-    def __init__(self, num_in, num_out, transferf=np.tanh, bias=True):
+    def __init__(self, num_in, num_out, transferf=np.tanh, bias=True, initf=linit.GlorotUniform().sample):
         if num_in < 1 or num_out < 1:
             raise ValueError("Num in and out should be >= 1")
         if transferf is None:
@@ -23,7 +22,8 @@ class Layer(object):
         self.num_out = num_out
         self.has_bias = bias
         self.transferf = transferf
-        self.W = np.zeros((num_out, num_in))
+        self.weight_initf = np.zeros if initf is None else initf
+        self.W = self.weight_initf((num_out, num_in))
         self.b = np.zeros((num_out,))
         
     def dot(self, x):
@@ -51,9 +51,9 @@ class Layer(object):
         pass
             
 class RecurrentLayer(Layer):
-    def __init__(self, num_in, num_out, transferf=np.tanh, bias=True, state_initf=None):
-        super(RecurrentLayer, self).__init__(num_in, num_out, transferf, bias)
-        self.K = np.zeros((num_out, num_out))
+    def __init__(self, num_in, num_out, state_initf=None, **kwargs):
+        super(RecurrentLayer, self).__init__(num_in, num_out, **kwargs)
+        self.K = self.weight_initf((num_out, num_out))
         self.state_initf = np.zeros if state_initf is None else state_initf
         self.h = self.state_initf((self.state_dim,))
         

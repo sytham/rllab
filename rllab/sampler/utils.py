@@ -4,14 +4,20 @@ import time
 import warnings
 
 def rollout(env, agent, max_path_length=np.inf, animated=False, speedup=1,
-            always_return_paths=False):
+            always_return_paths=False, env_start_state=None, agent_start_state=None):
     observations = []
     actions = []
     rewards = []
     agent_infos = []
     env_infos = []
-    o = env.reset()
-    agent.reset()
+    if env_start_state is not None: # not all envs support init_state
+        o = env.reset(init_state=env_start_state)
+    else:
+        o = env.reset()
+    if agent_start_state is not None:
+        agent.reset(init_state=agent_start_state)
+    else:
+        agent.reset()
     path_length = 0
     if animated:
         env.render()

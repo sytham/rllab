@@ -131,7 +131,7 @@ class GaussianLSTMPolicy(StochasticPolicy, LayersPowered, Serializable):
             out_layers = [mean_network.output_layer, l_log_std]
             if feature_network is not None:
                 out_layers.append(feature_network.output_layer)
-
+            self.set_greedy(False)
             LayersPowered.__init__(self, out_layers)
 
     @overrides
@@ -197,13 +197,16 @@ class GaussianLSTMPolicy(StochasticPolicy, LayersPowered, Serializable):
         # probs, hidden_vec, cell_vec = self.f_step_prob(all_input, self.prev_hiddens, self.prev_cells)
         means, log_stds, hidden_vec, cell_vec = self.f_step_mean_std(
             all_input, np.hstack([self.prev_hiddens, self.prev_cells]))
-        rnd = np.random.normal(size=means.shape)
-        actions = rnd * np.exp(log_stds) + means
+        if self.greedy:
+            actions, agent_info = means, dict(mean=means, log_std=np.zeros(log_stds.shape))
+        else:
+            rnd = np.random.normal(size=means.shape)
+            actions = rnd * np.exp(log_stds) + means
+            agent_info = dict(mean=means, log_std=log_stds)
         prev_actions = self.prev_actions
         self.prev_actions = self.action_space.flatten_n(actions)
         self.prev_hiddens = hidden_vec
         self.prev_cells = cell_vec
-        agent_info = dict(mean=means, log_std=log_stds)
         if self.state_include_action:
             agent_info["prev_action"] = np.copy(prev_actions)
         return actions, agent_info

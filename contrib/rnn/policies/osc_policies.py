@@ -109,7 +109,8 @@ from contrib.rnn.policies.rnn_policies import CTRNNPolicy
     
 
         
-class RosslerLayer(RecurrentLayer):
+class UniformRosslerLayer(RecurrentLayer):
+    ''' For coupling between nodes assumes same phase offset for all '''
     def __init__(self, num_in, num_out, transferf=identity, bias=True, state_initf=None):
         super(RosslerLayer, self).__init__(num_in, num_out, transferf, bias, state_initf)
                         
@@ -186,6 +187,102 @@ class RosslerLayer(RecurrentLayer):
         self.h[:] = self._one_step(S)
         return self.h
 
+
+class RosslerLayer(RecurrentLayer):
+    ''' Each edge between nodes can have its own phase offset '''
+    def __init__(self, num_in, num_out, transferf=identity, bias=True, state_initf=None):
+        super(RosslerLayer, self).__init__(num_in, num_out, transferf, bias, state_initf)
+                        
+        self._params = [0.2, 3, 5.7]
+        self.params = [0.2, 3, 5.7]
+        # state vars
+        self._x, self._y, self._z = self.h[0::3], self.h[1::3], self.h[2::3] # views on h with separate x,y,z
+        # time derivative
+        self._Hdot = np.zeros((3, self._x.shape[0]))
+        
+        # coupling gain
+        self.k = 0.5
+        
+        # gain on sensory input
+        self.ks = 1.0
+        
+        # edge matrix (between Rossler oscillators). Each edge contains desired phase offset
+        self._K = np.zeros((num_out, num_out))
+        self._K[range(0,num_out-1), range(1,num_out)] = -0.1*np.pi
+        self._set_rot_matrix()
+        
+    
+    def _set_rot_matrix(self):
+        xblock = np.cos(self._K.T)
+        xblock[self._K.T==0] = 0.0
+        yblock = -np.sin(self._K.T)
+        yblock[self._K.T==0] = 0.0
+        zblock = np.zeros(self._K.shape)
+        # self._C.dot(self.h) rotates each node through desired phase offset and calcs mean field per node
+        self._C = self.k*np.concatenate([xblock, yblock, zblock], axis=1)
+        # C has layout [xrot1,xrot2,..xrotn,yrot1,..,yrotn,zrot1,..,zrotn]. To have dotproduct with self.h, rearrange
+        # into [xrot1,yrot1,zrot1,xrot2,yrot2,zrot2,..xrotn,yrotn,zrotn]
+        nosc = xblock.shape[0]
+        self._C = np.concatenate([self._C.flat[i::nosc].reshape(nosc,3) for i in range(nosc)], axis=1)
+    
+    def set_K(self, K):
+        '''
+        Sets coupling matrix K. A zero entry at K[i,j] specifies no edge between node i and j. A non-zero entry
+        specifies node j should sync with node i, with the phase offset given by the entry. For no phase offset, use
+        2pi.
+        K can also be a one-dim array with same nr of non-zero entries as _K. This will then be used to re-populate the
+        existing _K.
+        '''
+        assert K.shape == self._K.shape or (K.ndim==1 and len(K) == np.flatnonzero(self._K).shape[0])
+        if K.shape == self._K.shape:
+            self._K[:,:] = K
+        else:
+            self._K[self._K.nonzero()] = K        
+        self._set_rot_matrix()
+        self._n = self.k * np.sum(~np.isclose(self._K, 0), 0)
+    
+    def get_flat_phase_offsets(self):
+        return self._K[self._K.nonzero()]
+    
+    @property
+    def params(self):
+        return self._params
+    @params.setter
+    def params(self, v):
+        self._params[:] = v[:]
+        self._a, self._b, self._c = self._params
+    
+    @property
+    def state_dim(self):
+        return 3*self.num_out
+    
+    def flat_dim(self):
+        return Layer.flat_dim(self) + np.flatnonzero(self._K).shape[0]
+      
+    def encode(self):
+        return np.concatenate((Layer.encode(self), self.get_flat_phase_offsets()))
+    
+    def decode(self, theta):
+        assert len(theta) == self.flat_dim()
+        nk = np.flatnonzero(self._K).shape[0]
+        Layer.decode(self, theta[:-nk])
+        self.set_K(theta[-nk:])
+        
+    def _coupling(self):
+        # self._C.dot(self.h) rotates each node through desired phase offset and calcs mean field per node
+        return self._C.dot(self.h) - self._n*self._x
+    
+    def _one_step(self, S):
+        self._Hdot[0,:] = -self._y - self._z + self._coupling() + self.ks*S #dx/dt
+        self._Hdot[1,:] = self._x + self._a*self._y                 #dy/dt
+        self._Hdot[2,:] = self._b + self._z*(self._x - self._c)     #dz/dt
+        return self._Hdot.T.reshape(-1,) # flatten to fit self.h
+
+    def out(self, x):
+        S = np.tanh(self.W.dot(x) + self.b)
+        self.h[:] = self._one_step(S)
+        return self.h
+    
 def rossler_initf(dim):
     # place init state roughly on attractor for a=0.2,b=3,c=5.7
     s = np.zeros(dim, dtype=np.float64)
@@ -210,7 +307,8 @@ class DeterministicRosslerPolicy(CTRNNPolicy):
         num_out = env_spec.action_space.flat_dim
                 
         self._layers = [RosslerLayer(num_in, hidden_sizes[0], state_initf=state_initf)]
-        self._layers.append(Layer(hidden_sizes[-1], num_out, identity))
+        self._layers[0].set_K(env_spec.joint_sync_offsets)
+        self._layers.append(Layer(hidden_sizes[-1], num_out, transferf=identity))
         super(DeterministicRosslerPolicy, self).__init__(env_spec, timeconstant, env_timestep, integrator, max_dt)
         
     def _calculate_dh(self, t, h, *args):
@@ -242,14 +340,15 @@ class DeterministicLimitCycleRosslerPolicy(DeterministicRosslerPolicy):
         return np.concatenate([
             np.array([self.timeconstant]),
             self._layers[-1].encode(),
-            np.array([self._layers[0].phi])
+            self._layers[0].get_flat_phase_offsets()
             ])
 
     def set_param_values(self, flattened_params, **tags):
         assert len(flattened_params) == self._layers[-1].flat_dim() + 2
         self.timeconstant = flattened_params[0]
-        self._layers[-1].decode(flattened_params[1:-1])
-        self._layers[0].phi = flattened_params[-1]
+        nk = np.flatnonzero(self._layers[0]._K).shape[0]
+        self._layers[-1].decode(flattened_params[1:-nk])
+        self._layers[0].set_K(flattened_params[-nk:])
         
 class DeterministicSensoryRosslerPolicy(DeterministicRosslerPolicy):
     def __init__(self,
@@ -264,19 +363,10 @@ class DeterministicSensoryRosslerPolicy(DeterministicRosslerPolicy):
                                                                    (env_spec.action_space.flat_dim,),
                                                                    timeconstant,env_timestep,state_initf,integrator)
         self._layers[-1].W  = np.eye(self._layers[-1].W.shape[0])
-        self._layers[0].k = 0.0
-        self._layers[0].W[1,-2] = 1.0
-        self._layers[0].W[1,-1] = -1.0
-        self._layers[0].b[-1] = 0.2*np.pi
+        self._layers[0].set_K(np.zeros(self._layers[0]._K.shape))
+        self._layers[0].W = 0.1*np.random.randn(self._layers[0].W.shape[0], self._layers[0].W.shape[1])
         
-    def get_param_values(self, **tags):
-        print("Get param values")
-        print(np.array([self.timeconstant]).ndim,
-            self._layers[-1].encode().ndim,
-            np.array([self._layers[0].ks]).ndim,
-            self._layers[0].W.ravel().ndim,
-            self._layers[0].b.ravel().ndim)
-        
+    def get_param_values(self, **tags):        
         return np.concatenate([
             np.array([self.timeconstant]),
             self._layers[-1].encode(),
@@ -292,4 +382,21 @@ class DeterministicSensoryRosslerPolicy(DeterministicRosslerPolicy):
         self._layers[-1].decode(flattened_params[1:ix])
         self._layers[0].ks = flattened_params[ix]
         Layer.decode(self._layers[0], flattened_params[ix+1:])
+        
+class DeterministicSensorySpecRosslerPolicy(DeterministicSensoryRosslerPolicy):
+    def __init__(self,
+                 env_spec,
+                 timeconstant=1./(4*np.pi),
+                 env_timestep=0.01,
+                 state_initf=rossler_initf,
+                 integrator='rk4'):
+        
+        Serializable.quick_init(self, locals())
+        super(DeterministicSensorySpecRosslerPolicy, self).__init__(env_spec,
+                                                                   (env_spec.action_space.flat_dim,),
+                                                                   timeconstant,env_timestep,state_initf,integrator)
+        self._layers[-1].W  = np.eye(self._layers[-1].W.shape[0])
+        self._layers[0].set_K(np.zeros(self._layers[0]._K.shape))
+        self._layers[0].W = 0.1*np.random.randn(self._layers[0].W.shape[0], self._layers[0].W.shape[1])
+        
         

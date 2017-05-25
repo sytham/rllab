@@ -6,15 +6,13 @@ import theano.tensor as TT
 
 from rllab.core.lasagne_layers import ParamLayer
 from rllab.core.lasagne_powered import LasagnePowered
-from rllab.core.network import GRUNetwork
 from rllab.core.serializable import Serializable
 from rllab.distributions.recurrent_diagonal_gaussian import RecurrentDiagonalGaussian
 from rllab.misc import ext
 from rllab.misc.overrides import overrides
 from rllab.policies.base import StochasticPolicy
-
-
-class GaussianGRUPolicy(StochasticPolicy, LasagnePowered):
+        
+class GaussianRNNPolicy(StochasticPolicy, LasagnePowered):
     def __init__(
             self,
             env_spec,
@@ -24,6 +22,7 @@ class GaussianGRUPolicy(StochasticPolicy, LasagnePowered):
             learn_std=True,
             init_std=1.0,
             output_nonlinearity=None,
+            **kwargs
     ):
         """
         :param env_spec: A spec for the env.
@@ -32,7 +31,7 @@ class GaussianGRUPolicy(StochasticPolicy, LasagnePowered):
         :return:
         """
         Serializable.quick_init(self, locals())
-        super(GaussianGRUPolicy, self).__init__(env_spec)
+        super(GaussianRNNPolicy, self).__init__(env_spec)
 
         assert len(hidden_sizes) == 1
 
@@ -42,16 +41,14 @@ class GaussianGRUPolicy(StochasticPolicy, LasagnePowered):
             obs_dim = env_spec.observation_space.flat_dim
         action_dim = env_spec.action_space.flat_dim
 
-        mean_network = GRUNetwork(
+        mean_network = self.create_mean_network(
             input_shape=(obs_dim,),
             output_dim=action_dim,
             hidden_dim=hidden_sizes[0],
             hidden_nonlinearity=hidden_nonlinearity,
             output_nonlinearity=output_nonlinearity,
-        )
-
-        l_mean = mean_network.output_layer
-        obs_var = mean_network.input_var
+            **kwargs
+            )
 
         l_log_std = ParamLayer(
             mean_network.input_layer,
@@ -91,9 +88,17 @@ class GaussianGRUPolicy(StochasticPolicy, LasagnePowered):
         self._dist = RecurrentDiagonalGaussian(action_dim)
 
         self.reset()
-        self.set_greedy(False)
+        self.greedy = False
         LasagnePowered.__init__(self, [mean_network.output_layer, l_log_std])
 
+    def create_mean_network(self, input_shape, output_dim, hidden_dim,
+                            hidden_nonlinearity=NL.tanh,
+                            output_nonlinearity=None):
+        raise NotImplementedError
+    
+    def set_greedy(self, greedy):
+        self.greedy = greedy
+        
     @overrides
     def dist_info_sym(self, obs_var, state_info_vars):
         n_batches, n_steps = obs_var.shape[:2]
@@ -112,7 +117,7 @@ class GaussianGRUPolicy(StochasticPolicy, LasagnePowered):
     def reset(self):
         self._prev_action = None
         self._prev_hidden = self._mean_network.hid_init_param.get_value()
-
+        
     # The return value is a pair. The first item is a matrix (N, A), where each
     # entry corresponds to the action value taken. The second item is a vector
     # of length N, where each entry is the density value for that action, under

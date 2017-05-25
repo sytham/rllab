@@ -108,7 +108,7 @@ class TestCTRNN(unittest.TestCase):
         t = np.arange(numsteps+1) * step
         plt.figure()
         plt.plot(t, y, label='Euler')
-        
+        print(y)
         
         rnn = DeterministicCTRNNPolicy(EnvSpec(DummySpace(indim), DummySpace(outdim)),
                                hidden_sizes=(1,),

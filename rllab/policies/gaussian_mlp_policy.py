@@ -114,6 +114,8 @@ class GaussianMLPPolicy(StochasticPolicy, LasagnePowered):
             inputs=[obs_var],
             outputs=[mean_var, log_std_var],
         )
+        
+        self.set_greedy(False)
 
     def dist_info_sym(self, obs_var, state_info_vars=None):
         mean_var, log_std_var = L.get_output([self._l_mean, self._l_log_std], obs_var)
@@ -121,10 +123,15 @@ class GaussianMLPPolicy(StochasticPolicy, LasagnePowered):
             log_std_var = TT.maximum(log_std_var, np.log(self.min_std))
         return dict(mean=mean_var, log_std=log_std_var)
 
+    def set_greedy(self, greedy):
+        self.greedy = greedy
+        
     @overrides
     def get_action(self, observation):
         flat_obs = self.observation_space.flatten(observation)
         mean, log_std = [x[0] for x in self._f_dist([flat_obs])]
+        if self.greedy:
+            return mean, dict(mean=mean, log_std=0)
         rnd = np.random.normal(size=mean.shape)
         action = rnd * np.exp(log_std) + mean
         return action, dict(mean=mean, log_std=log_std)
